@@ -78,6 +78,7 @@ const KnittingTracker = () => {
   const [selectedProjectId, setSelectedProjectId] = useState(null);
   const [showNewProject, setShowNewProject] = useState(false);
   const [showNewPattern, setShowNewPattern] = useState(false);
+  const [viewingPattern, setViewingPattern] = useState(null);
   const [greeting, setGreeting] = useState('');
   const [zenQuote, setZenQuote] = useState('');
 
@@ -95,23 +96,34 @@ const KnittingTracker = () => {
   ];
 
   useEffect(() => {
-    const storedProjects = localStorage.getItem('knitting-projects');
-    if (storedProjects) {
-      setProjects(JSON.parse(storedProjects));
-    }
-    const storedPatterns = localStorage.getItem('knitting-patterns');
-    if (storedPatterns) {
-      setPatterns(JSON.parse(storedPatterns));
-    }
+    const loadData = async () => {
+      try {
+        const stored = await window.storage.get('knitting-projects');
+        if (stored && stored.value) {
+          setProjects(JSON.parse(stored.value));
+        }
+      } catch (error) {
+        console.log('No saved projects yet');
+      }
+      try {
+        const storedPatterns = await window.storage.get('knitting-patterns');
+        if (storedPatterns && storedPatterns.value) {
+          setPatterns(JSON.parse(storedPatterns.value));
+        }
+      } catch (error) {
+        console.log('No saved patterns yet');
+      }
+    };
+    loadData();
     setZenQuote(zenQuotes[Math.floor(Math.random() * zenQuotes.length)]);
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('knitting-projects', JSON.stringify(projects));
+    window.storage.set('knitting-projects', JSON.stringify(projects));
   }, [projects]);
 
   useEffect(() => {
-    localStorage.setItem('knitting-patterns', JSON.stringify(patterns));
+    window.storage.set('knitting-patterns', JSON.stringify(patterns));
   }, [patterns]);
 
   useEffect(() => {
@@ -141,7 +153,12 @@ const KnittingTracker = () => {
       totalTime: 0,
       startTime: null,
       notes: [],
+      counters: [
+        { id: Date.now(), name: 'Main Rows', current: 0, total: project.totalRows || null }
+      ],
       createdAt: new Date().toISOString(),
+      startDate: new Date().toISOString(),
+      completionDate: null,
       status: 'active'
     };
     setProjects([...projects, newProject]);
@@ -149,7 +166,16 @@ const KnittingTracker = () => {
   };
 
   const updateProject = (id, updates) => {
-    setProjects(projects.map(p => p.id === id ? { ...p, ...updates } : p));
+    setProjects(projects.map(p => {
+      if (p.id === id) {
+        // If marking as complete, set completion date
+        if (updates.status === 'completed' && p.status !== 'completed') {
+          return { ...p, ...updates, completionDate: new Date().toISOString() };
+        }
+        return { ...p, ...updates };
+      }
+      return p;
+    }));
   };
 
   const deleteProject = (id) => {
@@ -221,6 +247,10 @@ const KnittingTracker = () => {
     return <NewPatternForm onAdd={addPattern} onCancel={() => setShowNewPattern(false)} />;
   }
 
+  if (viewingPattern) {
+    return <PatternViewer pattern={viewingPattern} onClose={() => setViewingPattern(null)} />;
+  }
+
   const selectedProject = selectedProjectId ? projects.find(p => p.id === selectedProjectId) : null;
 
   if (selectedProject) {
@@ -257,6 +287,7 @@ const KnittingTracker = () => {
           patterns={patterns}
           onNewPattern={() => setShowNewPattern(true)}
           onDeletePattern={deletePattern}
+          onViewPattern={setViewingPattern}
         />
       )}
 
@@ -552,7 +583,24 @@ const CountingPage = ({ projects, onSelectProject, onNewProject, onDeleteProject
   );
 };
 
-const LibraryPage = ({ patterns, onNewPattern, onDeletePattern }) => {
+const LibraryPage = ({ patterns, onNewPattern, onDeletePattern, onViewPattern }) => {
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
+
+  const handleDelete = (patternId, patternName) => {
+    setDeleteConfirm({ id: patternId, name: patternName });
+  };
+
+  const confirmDelete = () => {
+    if (deleteConfirm) {
+      onDeletePattern(deleteConfirm.id);
+      setDeleteConfirm(null);
+    }
+  };
+
+  const cancelDelete = () => {
+    setDeleteConfirm(null);
+  };
+
   return (
     <div>
       <div className="bg-amber-50/80 backdrop-blur-sm border-b-2 border-red-200 sticky top-0 z-10">
@@ -578,7 +626,8 @@ const LibraryPage = ({ patterns, onNewPattern, onDeletePattern }) => {
             {patterns.map(pattern => (
               <div
                 key={pattern.id}
-                className="bg-amber-50 rounded-2xl p-5 shadow-sm border-2 border-red-200 hover:shadow-md hover:border-red-300 transition-all"
+                onClick={() => pattern.fileData && onViewPattern(pattern)}
+                className={`bg-amber-50 rounded-2xl p-5 shadow-sm border-2 border-red-200 hover:shadow-md hover:border-red-300 transition-all ${pattern.fileData ? 'cursor-pointer' : ''}`}
               >
                 <div className="flex items-start justify-between">
                   <div className="flex items-start gap-3 flex-1">
@@ -593,13 +642,15 @@ const LibraryPage = ({ patterns, onNewPattern, onDeletePattern }) => {
                       {pattern.fileName && (
                         <p className="text-xs text-red-600 mt-2">{pattern.fileName}</p>
                       )}
+                      {pattern.fileData && (
+                        <p className="text-xs text-green-600 mt-1">✓ Click to view</p>
+                      )}
                     </div>
                   </div>
                   <button
-                    onClick={() => {
-                      if (window.confirm('Delete this pattern?')) {
-                        onDeletePattern(pattern.id);
-                      }
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDelete(pattern.id, pattern.name);
                     }}
                     className="text-red-400 hover:text-red-600 transition-colors"
                   >
@@ -616,6 +667,31 @@ const LibraryPage = ({ patterns, onNewPattern, onDeletePattern }) => {
           </div>
         )}
       </div>
+
+      {deleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-6" style={{ zIndex: 10000 }}>
+          <div className="bg-amber-50 rounded-2xl p-6 max-w-sm w-full shadow-2xl border-2 border-red-200">
+            <h3 className="text-xl font-semibold text-red-900 mb-3">Delete Pattern?</h3>
+            <p className="text-red-800 mb-6">
+              Are you sure you want to delete "<strong>{deleteConfirm.name}</strong>"? This cannot be undone.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={cancelDelete}
+                className="flex-1 px-4 py-3 bg-stone-200 text-stone-700 rounded-xl font-medium hover:bg-stone-300 transition-all active:scale-95"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                className="flex-1 px-4 py-3 bg-red-600 text-amber-50 rounded-xl font-medium hover:bg-red-700 transition-all active:scale-95"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -624,11 +700,19 @@ const NewPatternForm = ({ onAdd, onCancel }) => {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [fileName, setFileName] = useState('');
+  const [fileData, setFileData] = useState(null);
 
-  const handleFileChange = (e) => {
+  const handleFileChange = async (e) => {
     const file = e.target.files[0];
     if (file) {
       setFileName(file.name);
+      
+      // Convert file to base64
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setFileData(event.target.result);
+      };
+      reader.readAsDataURL(file);
     }
   };
 
@@ -637,7 +721,8 @@ const NewPatternForm = ({ onAdd, onCancel }) => {
       onAdd({
         name: name.trim(),
         description: description.trim(),
-        fileName: fileName || 'pattern.pdf'
+        fileName: fileName || 'pattern.pdf',
+        fileData: fileData
       });
     }
   };
@@ -681,10 +766,12 @@ const NewPatternForm = ({ onAdd, onCancel }) => {
 
         <div className="bg-amber-50 rounded-2xl p-6 shadow-sm border-2 border-red-200">
           <label className="block">
-            <div className="flex items-center justify-center gap-3 py-8 border-2 border-dashed border-red-300 rounded-xl cursor-pointer hover:border-red-400 hover:bg-red-50/50 transition-all">
-              <Upload size={24} className="text-red-600" />
-              <span className="text-red-700 font-medium">
-                {fileName ? fileName : 'Upload PDF'}
+            <div className={`flex items-center justify-center gap-3 py-8 border-2 border-dashed rounded-xl cursor-pointer transition-all ${
+              fileData ? 'border-green-400 bg-green-50/50' : 'border-red-300 hover:border-red-400 hover:bg-red-50/50'
+            }`}>
+              <Upload size={24} className={fileData ? 'text-green-600' : 'text-red-600'} />
+              <span className={`font-medium ${fileData ? 'text-green-700' : 'text-red-700'}`}>
+                {fileName ? `✓ ${fileName}` : 'Upload PDF'}
               </span>
             </div>
             <input
@@ -735,6 +822,58 @@ const TabBar = ({ currentTab, onTabChange }) => {
           <BookOpen size={24} />
           <span className="text-xs font-medium">Library</span>
         </button>
+      </div>
+    </div>
+  );
+};
+
+const PatternViewer = ({ pattern, onClose }) => {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-red-50 via-amber-50 to-stone-50" style={{fontFamily: 'Times New Roman, serif'}}>
+      <StitchBorder />
+      <PixelCat />
+      <div className="bg-amber-50/80 backdrop-blur-sm border-b-2 border-red-200 sticky top-0 z-10">
+        <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
+          <button onClick={onClose} className="text-red-600 font-medium">← Back</button>
+          <h1 className="text-lg font-semibold text-red-900">{pattern.name}</h1>
+          <a
+            href={pattern.fileData}
+            download={pattern.fileName}
+            className="text-red-600 font-medium"
+          >
+            Download
+          </a>
+        </div>
+      </div>
+
+      <div className="max-w-4xl mx-auto px-6 py-6">
+        {pattern.fileData ? (
+          <div className="bg-white rounded-2xl shadow-xl border-2 border-red-200 overflow-hidden" style={{height: 'calc(100vh - 200px)'}}>
+            <object
+              data={pattern.fileData}
+              type="application/pdf"
+              className="w-full h-full"
+            >
+              <div className="flex flex-col items-center justify-center h-full p-8 text-center">
+                <FileText size={64} className="text-red-300 mb-4" />
+                <p className="text-red-900 font-semibold mb-2">PDF Preview Not Available</p>
+                <p className="text-red-600 text-sm mb-6">Your browser may not support inline PDF viewing.</p>
+                <a
+                  href={pattern.fileData}
+                  download={pattern.fileName}
+                  className="px-6 py-3 bg-red-600 text-amber-50 rounded-full font-medium hover:bg-red-700 transition-all active:scale-95"
+                >
+                  Download PDF to View
+                </a>
+              </div>
+            </object>
+          </div>
+        ) : (
+          <div className="text-center py-20">
+            <FileText size={64} className="mx-auto text-red-300 mb-4" />
+            <p className="text-red-600">No PDF file available</p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -869,6 +1008,9 @@ const ProjectView = ({ project, onBack, onUpdate, onToggleTimer, onAddNote, form
   const [showNotes, setShowNotes] = useState(false);
   const [noteText, setNoteText] = useState('');
   const [currentTime, setCurrentTime] = useState(Date.now());
+  const [showAddCounter, setShowAddCounter] = useState(false);
+  const [newCounterName, setNewCounterName] = useState('');
+  const [newCounterTotal, setNewCounterTotal] = useState('');
 
   useEffect(() => {
     if (project.startTime) {
@@ -888,7 +1030,51 @@ const ProjectView = ({ project, onBack, onUpdate, onToggleTimer, onAddNote, form
     }
   };
 
-  const progress = project.totalRows ? (project.currentRow / project.totalRows) * 100 : 0;
+  const handleAddCounter = () => {
+    if (newCounterName.trim()) {
+      const newCounter = {
+        id: Date.now(),
+        name: newCounterName.trim(),
+        current: 0,
+        total: newCounterTotal ? parseInt(newCounterTotal) : null
+      };
+      onUpdate({
+        counters: [...(project.counters || []), newCounter]
+      });
+      setNewCounterName('');
+      setNewCounterTotal('');
+      setShowAddCounter(false);
+    }
+  };
+
+  const updateCounter = (counterId, updates) => {
+    onUpdate({
+      counters: project.counters.map(c => 
+        c.id === counterId ? { ...c, ...updates } : c
+      )
+    });
+  };
+
+  const deleteCounter = (counterId) => {
+    if (project.counters.length > 1) {
+      onUpdate({
+        counters: project.counters.filter(c => c.id !== counterId)
+      });
+    }
+  };
+
+  const formatDate = (dateString) => {
+    if (!dateString) return null;
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  // Ensure project has counters array (for backwards compatibility)
+  const counters = project.counters || [
+    { id: Date.now(), name: 'Main Rows', current: project.currentRow || 0, total: project.totalRows || null }
+  ];
+
+  const progress = counters[0].total ? (counters[0].current / counters[0].total) * 100 : 0;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-red-50 via-amber-50 to-stone-50 pb-20" style={{fontFamily: 'Times New Roman, serif'}}>
@@ -903,11 +1089,12 @@ const ProjectView = ({ project, onBack, onUpdate, onToggleTimer, onAddNote, form
       </div>
 
       <div className="max-w-2xl mx-auto px-6 py-6 space-y-6">
+        {/* Project Info Card */}
         <div className="bg-amber-50 rounded-2xl p-6 shadow-sm border-2 border-red-200">
           <div className="flex items-center justify-between mb-4">
             <div>
               <p className="text-sm text-red-700">{project.type}</p>
-              {project.totalRows && (
+              {counters[0].total && (
                 <p className="text-3xl font-bold text-red-900 mt-1">
                   {Math.round(progress)}%
                 </p>
@@ -925,7 +1112,7 @@ const ProjectView = ({ project, onBack, onUpdate, onToggleTimer, onAddNote, form
             </button>
           </div>
 
-          {project.totalRows && (
+          {counters[0].total && (
             <div className="w-full bg-red-100 rounded-full h-3 overflow-hidden mb-4">
               <div 
                 className="bg-gradient-to-r from-red-500 to-red-600 h-full rounded-full transition-all"
@@ -934,39 +1121,134 @@ const ProjectView = ({ project, onBack, onUpdate, onToggleTimer, onAddNote, form
             </div>
           )}
 
-          <div className="flex items-center justify-between text-sm text-red-700">
+          <div className="flex items-center justify-between text-sm text-red-700 mb-3">
             <div className="flex items-center gap-1">
               <Clock size={16} />
               <span>{formatTime(displayTime)}</span>
             </div>
-            {project.totalRows && (
-              <span>Row {project.currentRow} / {project.totalRows}</span>
+            {counters[0].total && (
+              <span>Row {counters[0].current} / {counters[0].total}</span>
+            )}
+          </div>
+
+          {/* Dates */}
+          <div className="border-t border-red-200 pt-3 mt-3 space-y-1 text-xs text-red-600">
+            <div className="flex justify-between">
+              <span>Started:</span>
+              <span className="font-medium">{formatDate(project.startDate)}</span>
+            </div>
+            {project.completionDate && (
+              <div className="flex justify-between">
+                <span>Completed:</span>
+                <span className="font-medium">{formatDate(project.completionDate)}</span>
+              </div>
             )}
           </div>
         </div>
 
-        <div className="bg-amber-50 rounded-2xl p-6 shadow-sm border-2 border-red-200">
-          <h3 className="text-sm font-medium text-red-800 mb-4">Row Counter</h3>
+        {/* Multiple Counters */}
+        <div className="space-y-3">
           <div className="flex items-center justify-between">
+            <h3 className="text-lg font-semibold text-red-900">Counters</h3>
             <button
-              onClick={() => onUpdate({ currentRow: Math.max(0, project.currentRow - 1) })}
-              className="w-16 h-16 rounded-full bg-red-100 text-red-700 text-2xl font-semibold active:scale-95 transition-all"
+              onClick={() => setShowAddCounter(true)}
+              className="text-red-600 text-sm font-medium hover:text-red-700"
             >
-              −
-            </button>
-            <div className="text-center">
-              <div className="text-5xl font-bold text-red-900">{project.currentRow}</div>
-              <div className="text-sm text-red-700 mt-1">rows</div>
-            </div>
-            <button
-              onClick={() => onUpdate({ currentRow: project.currentRow + 1 })}
-              className="w-16 h-16 rounded-full bg-gradient-to-br from-red-500 to-red-600 text-amber-50 text-2xl font-semibold shadow-lg active:scale-95 transition-all"
-            >
-              +
+              + Add Counter
             </button>
           </div>
+
+          {counters.map((counter, index) => (
+            <div key={counter.id} className="bg-amber-50 rounded-2xl p-6 shadow-sm border-2 border-red-200">
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="text-sm font-semibold text-red-800">{counter.name}</h4>
+                {counters.length > 1 && (
+                  <button
+                    onClick={() => deleteCounter(counter.id)}
+                    className="text-red-400 hover:text-red-600 transition-colors"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between">
+                <button
+                  onClick={() => updateCounter(counter.id, { current: Math.max(0, counter.current - 1) })}
+                  className="w-14 h-14 rounded-full bg-red-100 text-red-700 text-xl font-semibold active:scale-95 transition-all"
+                >
+                  −
+                </button>
+                <div className="text-center">
+                  <div className="text-4xl font-bold text-red-900">{counter.current}</div>
+                  {counter.total && (
+                    <div className="text-xs text-red-600 mt-1">of {counter.total}</div>
+                  )}
+                </div>
+                <button
+                  onClick={() => updateCounter(counter.id, { current: counter.current + 1 })}
+                  className="w-14 h-14 rounded-full bg-gradient-to-br from-red-500 to-red-600 text-amber-50 text-xl font-semibold shadow-lg active:scale-95 transition-all"
+                >
+                  +
+                </button>
+              </div>
+
+              {counter.total && (
+                <div className="w-full bg-red-100 rounded-full h-2 overflow-hidden mt-4">
+                  <div 
+                    className="bg-gradient-to-r from-red-500 to-red-600 h-full rounded-full transition-all"
+                    style={{ width: `${Math.min(100, (counter.current / counter.total) * 100)}%` }}
+                  />
+                </div>
+              )}
+            </div>
+          ))}
         </div>
 
+        {/* Add Counter Modal */}
+        {showAddCounter && (
+          <div className="bg-amber-50 rounded-2xl p-6 shadow-sm border-2 border-red-200">
+            <h4 className="text-sm font-semibold text-red-900 mb-4">Add New Counter</h4>
+            <div className="space-y-3">
+              <input
+                type="text"
+                placeholder="Counter name (e.g., Left Sleeve, Body)"
+                value={newCounterName}
+                onChange={(e) => setNewCounterName(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl bg-red-50 border-2 border-red-200 focus:outline-none focus:border-red-400 text-red-900 placeholder-red-400"
+                autoFocus
+              />
+              <input
+                type="number"
+                placeholder="Total rows (optional)"
+                value={newCounterTotal}
+                onChange={(e) => setNewCounterTotal(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl bg-red-50 border-2 border-red-200 focus:outline-none focus:border-red-400 text-red-900 placeholder-red-400"
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    setShowAddCounter(false);
+                    setNewCounterName('');
+                    setNewCounterTotal('');
+                  }}
+                  className="flex-1 px-4 py-2 bg-stone-200 text-stone-700 rounded-xl font-medium hover:bg-stone-300 transition-all active:scale-95"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAddCounter}
+                  disabled={!newCounterName.trim()}
+                  className="flex-1 px-4 py-2 bg-red-600 text-amber-50 rounded-xl font-medium hover:bg-red-700 disabled:opacity-50 transition-all active:scale-95"
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Notes Section */}
         <div className="bg-amber-50 rounded-2xl p-6 shadow-sm border-2 border-red-200">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-medium text-red-800">Notes</h3>
