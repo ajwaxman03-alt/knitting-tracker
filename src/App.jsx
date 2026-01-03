@@ -96,19 +96,19 @@ const KnittingTracker = () => {
   ];
 
   useEffect(() => {
-    const loadData = async () => {
+    const loadData = () => {
       try {
-        const stored = await window.storage.get('knitting-projects');
-        if (stored && stored.value) {
-          setProjects(JSON.parse(stored.value));
+        const stored = localStorage.getItem('knitting-projects');
+        if (stored) {
+          setProjects(JSON.parse(stored));
         }
       } catch (error) {
         console.log('No saved projects yet');
       }
       try {
-        const storedPatterns = await window.storage.get('knitting-patterns');
-        if (storedPatterns && storedPatterns.value) {
-          setPatterns(JSON.parse(storedPatterns.value));
+        const storedPatterns = localStorage.getItem('knitting-patterns');
+        if (storedPatterns) {
+          setPatterns(JSON.parse(storedPatterns));
         }
       } catch (error) {
         console.log('No saved patterns yet');
@@ -119,11 +119,11 @@ const KnittingTracker = () => {
   }, []);
 
   useEffect(() => {
-    window.storage.set('knitting-projects', JSON.stringify(projects));
+    localStorage.setItem('knitting-projects', JSON.stringify(projects));
   }, [projects]);
 
   useEffect(() => {
-    window.storage.set('knitting-patterns', JSON.stringify(patterns));
+    localStorage.setItem('knitting-patterns', JSON.stringify(patterns));
   }, [patterns]);
 
   useEffect(() => {
